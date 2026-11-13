@@ -22,6 +22,8 @@ function SceneLoading() {
 }
 
 const ArenaCanvas = dynamic(() => import("./arena-scene-canvas"), { ssr: false, loading: SceneLoading });
+// Same scene for the login backdrop, without a loading message.
+const AmbientCanvas = dynamic(() => import("./arena-scene-canvas"), { ssr: false });
 
 function supportsWebGL(): boolean {
   try {
@@ -183,7 +185,9 @@ export function ArenaBackdrop({ className }: { className?: string }) {
     <div className={cn("pointer-events-none", className)} aria-hidden="true">
       {mode === "3d" ? (
         <SceneBoundary fallback={<StaticBackdrop />}>
-          <ArenaCanvas nodes={AMBIENT_NODES} ambient />
+          <div className="h-full w-full animate-in duration-1000 fade-in-0">
+            <AmbientCanvas nodes={AMBIENT_NODES} ambient />
+          </div>
         </SceneBoundary>
       ) : (
         <StaticBackdrop />

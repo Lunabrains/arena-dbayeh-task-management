@@ -22,8 +22,10 @@ export default function LoginPage() {
 
   return (
     <main className="relative min-h-dvh overflow-hidden">
-      <ArenaBackdrop className="absolute inset-0" />
+      <ArenaBackdrop className="absolute inset-0 opacity-60" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_38%,transparent,rgb(7_9_8/72%)_62%,#070908)]" />
+      {/* Keep the copy readable where the scene passes behind it. */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_46%_30%_at_50%_62%,rgb(7_9_8/82%),transparent_78%)]" />
       {/* Dim the scene behind the role cards so the text stays readable. */}
       <div
         className={cn(
