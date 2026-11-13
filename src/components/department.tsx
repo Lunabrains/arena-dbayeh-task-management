@@ -33,6 +33,7 @@ export function EmployeeCard({ user }: { user: User }) {
   const queue = useMemo(() => (open ? queueFor(db, user.id) : []), [open, db, user.id]);
   const mayAssign = user.department_id ? canAssign(db, me, user.id, user.department_id) : false;
   const focus = today.current ?? today.paused;
+  const outlet = db.restaurants.find((r) => r.id === user.restaurant_id);
 
   if (!canViewUser(me, user)) return null;
   return (
@@ -47,7 +48,10 @@ export function EmployeeCard({ user }: { user: User }) {
         <Avatar user={user} size={44} live={working} />
         <div className="min-w-0 flex-1 leading-tight">
           <p className="truncate font-semibold">{user.name}</p>
-          <p className="truncate text-xs text-paper/55">{user.title}</p>
+          <p className="truncate text-xs text-paper/55">
+            {user.title}
+            {outlet ? ` · ${outlet.name}` : ""}
+          </p>
         </div>
         <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wider uppercase", STATUS_CHIP[today.status])}>
           {STATUS_TEXT[today.status]}

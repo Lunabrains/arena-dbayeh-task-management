@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, Rocket } from "lucide-react";
+import { AlarmClock, Check, ChevronDown, Rocket } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useMemo, useState, type FormEvent } from "react";
 import { Avatar, Btn, Chip, EASE } from "@/components/kit";
@@ -9,8 +9,8 @@ import { assignableDepartmentIds, assignableUsers } from "@/lib/permissions";
 import { idx, queueFor } from "@/lib/selectors";
 import { actions, useDb, useMe } from "@/lib/store";
 import { TEMPLATES } from "@/lib/templates";
-import { addDays, beirutToUtc, dateKey, fromInputs, MIN, timeInputValue } from "@/lib/time";
-import { PRIORITIES, PRIORITY_COLOR, PRIORITY_LABEL, type Priority } from "@/lib/types";
+import { addDays, beirutToUtc, dateKey, fmtDuration, fromInputs, MIN, timeInputValue } from "@/lib/time";
+import { PRIORITIES, PRIORITY_COLOR, PRIORITY_LABEL, type Priority, type User } from "@/lib/types";
 import { closeComposer, useUi, type ComposerPreset } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +27,7 @@ export function TaskComposer() {
 }
 
 const label = "mb-1.5 block text-[11px] font-semibold tracking-[0.14em] text-paper/50 uppercase";
+const TIME_CHOICES = [10, 15, 30, 45, 60, 90];
 
 function dueFrom(t: number) {
   return { date: dateKey(t), time: timeInputValue(t) };
@@ -42,13 +43,13 @@ function ComposerForm({ preset }: { preset: ComposerPreset }) {
   const [description, setDescription] = useState("");
   const [assignee, setAssignee] = useState(preset.assigned_to ?? "");
   const [priority, setPriority] = useState<Priority>("medium");
+  const [allowed, setAllowed] = useState(30); // minutes
   const [due, setDue] = useState(() => {
     const now = Date.now();
     // Two hours from now, rounded to the half hour, kept inside today.
     const t = Math.ceil((now + 120 * MIN) / (30 * MIN)) * 30 * MIN;
     return dueFrom(Math.min(t, beirutToUtc(dateKey(now), 23, 30)));
   });
-  const [est, setEst] = useState<number | null>(null);
   const [category, setCategory] = useState("");
   const [notes, setNotes] = useState("");
   const [more, setMore] = useState(false);
@@ -56,6 +57,24 @@ function ComposerForm({ preset }: { preset: ComposerPreset }) {
 
   const people = useMemo(() => assignableUsers(db, me, dept), [db, me, dept]);
   const templates = TEMPLATES[dept] ?? [];
+
+  // Everyone beneath the assigner, grouped the way the venue is organised.
+  const groups = useMemo(() => {
+    const out: { label: string; users: User[] }[] = [];
+    const leadership = people.filter((u) => !u.department_id);
+    const managers = people.filter((u) => u.department_id && u.role === "manager");
+    const staff = people.filter((u) => u.role === "employee");
+    const outlets = db.restaurants.filter((r) => r.department_id === dept);
+    if (leadership.length) out.push({ label: "Leadership", users: leadership });
+    if (managers.length) out.push({ label: "Department manager", users: managers });
+    for (const r of outlets) {
+      const waiters = staff.filter((u) => u.restaurant_id === r.id);
+      if (waiters.length) out.push({ label: r.name, users: waiters });
+    }
+    const rest = staff.filter((u) => !outlets.some((r) => r.id === u.restaurant_id));
+    if (rest.length) out.push({ label: "Team", users: rest });
+    return out;
+  }, [people, db.restaurants, dept]);
 
   const pickDept = (id: string) => {
     setDept(id);
@@ -78,7 +97,7 @@ function ComposerForm({ preset }: { preset: ComposerPreset }) {
       assigned_to: assignee,
       priority,
       due_at: fromInputs(due.date, due.time),
-      estimated_duration: est,
+      estimated_duration: allowed,
       category,
       internal_notes: notes,
     });
@@ -87,13 +106,48 @@ function ComposerForm({ preset }: { preset: ComposerPreset }) {
     setTimeout(closeComposer, 1600);
   };
 
+  if (deployed) {
+    return (
+      <motion.div
+        className="grid min-h-[340px] place-items-center p-8 text-center"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        role="status"
+      >
+        <div className="flex flex-col items-center gap-4">
+          <motion.div
+            className="relative grid size-24 place-items-center rounded-full bg-brand text-ink"
+            initial={{ scale: 0.3, rotate: -30 }}
+            animate={{ scale: 1, rotate: 0 }}
+            transition={{ type: "spring", stiffness: 260, damping: 16 }}
+          >
+            <motion.span
+              className="absolute inset-0 rounded-full border-2 border-brand"
+              initial={{ scale: 1, opacity: 0.8 }}
+              animate={{ scale: 2.1, opacity: 0 }}
+              transition={{ duration: 1.1, ease: EASE }}
+            />
+            <Rocket className="size-10" />
+          </motion.div>
+          <div>
+            <DialogTitle className="display text-3xl">Task deployed</DialogTitle>
+            <DialogDescription className="mt-1.5 text-sm text-paper/65">
+              “{title.trim()}” is now in {deployed}&rsquo;s queue, with {fmtDuration(allowed * 60)} allowed.
+            </DialogDescription>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <form onSubmit={submit} className="relative">
       <div className="p-5 pb-0">
         <p className="eyebrow">Task deployment</p>
         <DialogTitle className="display mt-1 text-3xl">Deploy a task</DialogTitle>
         <DialogDescription className="mt-1.5 text-paper/55">
-          Pick a template or write your own, choose who does it, set the priority and deadline.
+          Pick a template or write your own, choose who does it, then set the priority, the time allowed and the
+          deadline.
         </DialogDescription>
       </div>
 
@@ -132,7 +186,7 @@ function ComposerForm({ preset }: { preset: ComposerPreset }) {
                   onClick={() => {
                     setTitle(t.title);
                     setDescription(t.description);
-                    setEst(t.est);
+                    setAllowed(t.est);
                     setCategory(t.category);
                   }}
                 >
@@ -153,34 +207,41 @@ function ComposerForm({ preset }: { preset: ComposerPreset }) {
         <div>
           <span className={label}>Assign to</span>
           {people.length === 0 ? (
-            <p className="text-sm text-paper/55">No one in this department can be assigned by your role.</p>
+            <p className="text-sm text-paper/55">No one in this department sits beneath your position.</p>
           ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
-              {people.map((u) => {
-                const on = u.id === assignee;
-                const load = queueFor(db, u.id).length;
-                return (
-                  <button
-                    key={u.id}
-                    type="button"
-                    onClick={() => setAssignee(u.id)}
-                    aria-pressed={on}
-                    className={cn(
-                      "flex items-center gap-3 rounded-2xl border p-2.5 text-left transition",
-                      on ? "border-brand/70 bg-brand/14" : "border-white/8 bg-white/[0.03] hover:border-white/25",
-                    )}
-                  >
-                    <Avatar user={u} size={38} live={i.openByEmployee.has(u.id)} />
-                    <span className="min-w-0 flex-1 leading-tight">
-                      <span className="block truncate text-sm font-semibold">{u.name}</span>
-                      <span className="block truncate text-[11px] text-paper/55">
-                        {u.title} · {load} open
-                      </span>
-                    </span>
-                    {on && <Check className="size-4 shrink-0 text-brand" />}
-                  </button>
-                );
-              })}
+            <div className="space-y-3">
+              {groups.map((g) => (
+                <div key={g.label}>
+                  {groups.length > 1 && <p className="mb-1.5 text-xs font-semibold text-paper/45">{g.label}</p>}
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {g.users.map((u) => {
+                      const on = u.id === assignee;
+                      const load = queueFor(db, u.id).length;
+                      return (
+                        <button
+                          key={u.id}
+                          type="button"
+                          onClick={() => setAssignee(u.id)}
+                          aria-pressed={on}
+                          className={cn(
+                            "flex items-center gap-3 rounded-2xl border p-2.5 text-left transition",
+                            on ? "border-brand/70 bg-brand/14" : "border-white/8 bg-white/[0.03] hover:border-white/25",
+                          )}
+                        >
+                          <Avatar user={u} size={38} live={i.openByEmployee.has(u.id)} />
+                          <span className="min-w-0 flex-1 leading-tight">
+                            <span className="block truncate text-sm font-semibold">{u.name}</span>
+                            <span className="block truncate text-[11px] text-paper/55">
+                              {u.title} · {load} open
+                            </span>
+                          </span>
+                          {on && <Check className="size-4 shrink-0 text-brand" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -212,6 +273,34 @@ function ComposerForm({ preset }: { preset: ComposerPreset }) {
               );
             })}
           </div>
+        </div>
+
+        <div>
+          <span className={label}>Time allowed</span>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {TIME_CHOICES.map((m) => (
+              <Chip key={m} active={allowed === m} onClick={() => setAllowed(m)}>
+                {fmtDuration(m * 60)}
+              </Chip>
+            ))}
+            <label className="flex items-center gap-2 text-xs text-paper/55">
+              <input
+                type="number"
+                min={1}
+                max={600}
+                inputMode="numeric"
+                className="field w-20 py-1.5 text-center"
+                aria-label="Time allowed in minutes"
+                value={allowed || ""}
+                onChange={(e) => setAllowed(Math.max(0, Math.min(600, Math.round(Number(e.target.value) || 0))))}
+              />
+              minutes
+            </label>
+          </div>
+          <p className="mt-2 flex items-start gap-1.5 text-xs text-paper/50">
+            <AlarmClock className="mt-px size-3.5 shrink-0 text-warn" />
+            If the task takes longer than this, the assignee and everyone above them get an alert.
+          </p>
         </div>
 
         <div>
@@ -251,7 +340,7 @@ function ComposerForm({ preset }: { preset: ComposerPreset }) {
             className="flex items-center gap-1.5 text-xs font-semibold text-paper/55 hover:text-paper"
           >
             <ChevronDown className={cn("size-4 transition-transform", more && "rotate-180")} />
-            Optional: estimate, category, internal notes
+            Optional: category and internal notes
           </button>
           <AnimatePresence initial={false}>
             {more && (
@@ -262,16 +351,6 @@ function ComposerForm({ preset }: { preset: ComposerPreset }) {
                 className="overflow-hidden"
               >
                 <div className="space-y-3 pt-3">
-                  <div>
-                    <span className={label}>Estimated duration</span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {[15, 30, 45, 60, 90].map((m) => (
-                        <Chip key={m} active={est === m} onClick={() => setEst(est === m ? null : m)}>
-                          {m} min
-                        </Chip>
-                      ))}
-                    </div>
-                  </div>
                   <input
                     className="field"
                     placeholder="Category (for example Opening, Safety)"
@@ -295,7 +374,7 @@ function ComposerForm({ preset }: { preset: ComposerPreset }) {
 
       <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-white/10 bg-[#0b0f0d] p-4">
         <p className="hidden text-xs text-paper/45 sm:block">
-          {est ? `${est} min estimate · ` : ""}
+          {allowed ? `${fmtDuration(allowed * 60)} allowed · ` : ""}
           {PRIORITY_LABEL[priority]} priority
         </p>
         <div className="ml-auto flex gap-2">
@@ -306,39 +385,6 @@ function ComposerForm({ preset }: { preset: ComposerPreset }) {
         </div>
       </div>
 
-      <AnimatePresence>
-        {deployed && (
-          <motion.div
-            className="absolute inset-0 z-10 grid place-items-center rounded-3xl bg-[#080b09]/96 backdrop-blur"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            role="status"
-          >
-            <div className="flex flex-col items-center gap-4 p-6 text-center">
-              <motion.div
-                className="relative grid size-24 place-items-center rounded-full bg-brand text-ink"
-                initial={{ scale: 0.3, rotate: -30 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ type: "spring", stiffness: 260, damping: 16 }}
-              >
-                <motion.span
-                  className="absolute inset-0 rounded-full border-2 border-brand"
-                  initial={{ scale: 1, opacity: 0.8 }}
-                  animate={{ scale: 2.1, opacity: 0 }}
-                  transition={{ duration: 1.1, ease: EASE }}
-                />
-                <Rocket className="size-10" />
-              </motion.div>
-              <div>
-                <p className="display text-3xl">Task deployed</p>
-                <p className="mt-1.5 text-sm text-paper/65">
-                  “{title.trim()}” is now in {deployed}&rsquo;s queue.
-                </p>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </form>
   );
 }

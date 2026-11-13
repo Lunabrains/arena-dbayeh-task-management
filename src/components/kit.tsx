@@ -366,7 +366,9 @@ export function Stat({
   icon,
   tone = "default",
   className,
+  onClick,
 }: {
+  onClick?: () => void; // makes the tile a button
   label: string;
   value?: number;
   format?: (n: number) => string;
@@ -380,7 +382,20 @@ export function Stat({
     <motion.div
       whileHover={{ y: -3 }}
       transition={{ type: "spring", stiffness: 380, damping: 26 }}
-      className={cn("glass relative overflow-hidden rounded-2xl p-4", className)}
+      className={cn("glass relative overflow-hidden rounded-2xl p-4", onClick && "cursor-pointer hover:border-white/25", className)}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
     >
       <div className="flex items-start justify-between gap-2">
         <p className="text-[11px] font-semibold tracking-[0.14em] text-paper/55 uppercase">{label}</p>

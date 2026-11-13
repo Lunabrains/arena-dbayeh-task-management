@@ -10,7 +10,7 @@ import {
   canSubmitDepartmentReport,
   canSubmitExecutiveReport,
 } from "./permissions";
-import { departmentSnapshot, executiveSnapshot, idx } from "./selectors";
+import { departmentSnapshot, elapsedSeconds, executiveSnapshot, idx } from "./selectors";
 import { iso, ms } from "./time";
 import type { ActivityAction, Database, Priority, Task, TaskActivityLog, TaskTimeSession, User } from "./types";
 
@@ -49,6 +49,29 @@ const closeOpen = (sessions: TaskTimeSession[], taskId: string, now: number): Ta
       : s,
   );
 
+/**
+ * One "ran over its time allowed" entry per task, stamped at the moment the
+ * limit was crossed. The fixed id keeps two open tabs from logging it twice.
+ */
+function overTimeEntry(db: Database, task: Task, now: number, known?: Set<string>): TaskActivityLog | null {
+  if (!task.estimated_duration || !task.assigned_to) return null;
+  const over = elapsedSeconds(db, task.id, now) - task.estimated_duration * 60;
+  if (over <= 0) return null;
+  const id = `ot_${task.id}`;
+  if (known ? known.has(id) : db.logs.some((l) => l.id === id)) return null;
+  return {
+    id,
+    task_id: task.id,
+    actor_id: task.assigned_to,
+    action: "over_time",
+    previous_value: null,
+    new_value: String(task.estimated_duration),
+    created_at: iso(now - over * 1000),
+  };
+}
+
+const withAlert = (alert: TaskActivityLog | null) => (alert ? [alert] : []);
+
 export interface NewTaskInput {
   title: string;
   description: string;
@@ -71,6 +94,7 @@ export function createTask(db: Database, actor: User, now: number, input: NewTas
   if (!canAssign(db, actor, input.assigned_to, input.department_id))
     fail("You are not allowed to assign tasks to this person.");
   if (Number.isNaN(ms(input.due_at))) fail("Set a due date and time.");
+  if (!input.estimated_duration || input.estimated_duration <= 0) fail("Set the time allowed for this task.");
   const task: Task = {
     id: uid("t"),
     title,
@@ -106,7 +130,7 @@ export function pauseTask(db: Database, actor: User, now: number, taskId: string
     ...db,
     tasks: patch(db, taskId, { status: "paused" }, now),
     sessions: closeOpen(db.sessions, taskId, now),
-    logs: [...db.logs, entry(now, taskId, actor.id, "paused")],
+    logs: [...db.logs, ...withAlert(overTimeEntry(db, task, now)), entry(now, taskId, actor.id, "paused")],
   };
 }
 
@@ -147,7 +171,7 @@ export function completeTask(db: Database, actor: User, now: number, taskId: str
     ...db,
     tasks: patch(db, taskId, { status: "completed", completed_at: iso(now), completion_note: note?.trim() || null }, now),
     sessions: closeOpen(db.sessions, taskId, now),
-    logs: [...db.logs, entry(now, taskId, actor.id, "completed")],
+    logs: [...db.logs, ...withAlert(overTimeEntry(db, task, now)), entry(now, taskId, actor.id, "completed")],
   };
 }
 
@@ -160,7 +184,7 @@ export function setCompletionNote(db: Database, actor: User, now: number, taskId
 
 export function reopenTask(db: Database, actor: User, now: number, taskId: string): Database {
   const task = getTask(db, taskId);
-  if (!canManageTask(actor, task)) fail("Only an authorised manager can reopen a completed task.");
+  if (!canManageTask(db, actor, task)) fail("Only an authorised manager can reopen a completed task.");
   if (task.status !== "completed") fail("Only completed tasks can be reopened.");
   const hadTime = (idx(db).closedSeconds.get(taskId) ?? 0) > 0;
   return {
@@ -172,7 +196,7 @@ export function reopenTask(db: Database, actor: User, now: number, taskId: strin
 
 export function reassignTask(db: Database, actor: User, now: number, taskId: string, userId: string): Database {
   const task = getTask(db, taskId);
-  if (!canManageTask(actor, task)) fail("You are not allowed to reassign this task.");
+  if (!canManageTask(db, actor, task)) fail("You are not allowed to reassign this task.");
   if (task.status === "completed") fail("Reopen the task before reassigning it.");
   if (!canAssign(db, actor, userId, task.department_id)) fail("You cannot assign this task to that person.");
   if (task.assigned_to === userId) return db;
@@ -187,7 +211,7 @@ export function reassignTask(db: Database, actor: User, now: number, taskId: str
 
 export function changePriority(db: Database, actor: User, now: number, taskId: string, priority: Priority): Database {
   const task = getTask(db, taskId);
-  if (!canManageTask(actor, task)) fail("You are not allowed to change this task's priority.");
+  if (!canManageTask(db, actor, task)) fail("You are not allowed to change this task's priority.");
   if (task.priority === priority) return db;
   return {
     ...db,
@@ -204,7 +228,7 @@ export function updateTask(
   change: Partial<Pick<Task, "title" | "description" | "due_at" | "estimated_duration" | "category" | "internal_notes">>,
 ): Database {
   const task = getTask(db, taskId);
-  if (!canManageTask(actor, task)) fail("You are not allowed to edit this task.");
+  if (!canManageTask(db, actor, task)) fail("You are not allowed to edit this task.");
   if (change.title !== undefined && change.title.trim().length < 3) fail("Give the task a title.");
   if (change.due_at !== undefined && Number.isNaN(ms(change.due_at))) fail("Set a valid due date and time.");
   return {
@@ -217,7 +241,7 @@ export function updateTask(
 /** Soft delete: the row stays, so past reports and logs keep their meaning. */
 export function removeTask(db: Database, actor: User, now: number, taskId: string): Database {
   const task = getTask(db, taskId);
-  if (!canManageTask(actor, task)) fail("You are not allowed to remove this task.");
+  if (!canManageTask(db, actor, task)) fail("You are not allowed to remove this task.");
   if (task.status === "completed") fail("Completed tasks stay on record and cannot be removed.");
   return {
     ...db,
@@ -230,7 +254,7 @@ export function removeTask(db: Database, actor: User, now: number, taskId: strin
 /** Manual order inside one priority level. `orderedIds` is the new top-to-bottom order. */
 export function reorderTasks(db: Database, actor: User, now: number, orderedIds: string[]): Database {
   const tasks = orderedIds.map((id) => getTask(db, id));
-  if (tasks.some((t) => !canManageTask(actor, t))) fail("You are not allowed to reorder these tasks.");
+  if (tasks.some((t) => !canManageTask(db, actor, t))) fail("You are not allowed to reorder these tasks.");
   if (new Set(tasks.map((t) => t.priority)).size > 1) fail("Tasks can only be reordered inside one priority level.");
   const rank = new Map(orderedIds.map((id, n) => [id, n]));
   return {
@@ -308,14 +332,28 @@ export function submitExecutiveReport(db: Database, actor: User, now: number, da
   };
 }
 
-/** Adds a "became overdue" activity entry once per task when its deadline passes. */
-export function syncOverdue(db: Database, now: number): Database {
-  const logged = new Set<string>();
-  for (const l of db.logs) if (l.action === "overdue" && l.task_id) logged.add(l.task_id);
-  const fresh = idx(db).live.filter((t) => t.status !== "completed" && ms(t.due_at) < now && !logged.has(t.id));
-  if (fresh.length === 0) return db;
-  return {
-    ...db,
-    logs: [...db.logs, ...fresh.map((t) => entry(ms(t.due_at), t.id, t.assigned_to ?? t.assigned_by, "overdue"))],
-  };
+/**
+ * Time-driven alerts, checked every few seconds: a "became overdue" entry when
+ * a deadline passes and a "ran over its time allowed" entry when a running
+ * task exceeds the time set for it. Each is logged once per task.
+ */
+export function syncAlerts(db: Database, now: number): Database {
+  const known = new Set<string>();
+  const overdue = new Set<string>();
+  for (const l of db.logs) {
+    if (l.action === "over_time") known.add(l.id);
+    else if (l.action === "overdue" && l.task_id) overdue.add(l.task_id);
+  }
+  const fresh: TaskActivityLog[] = [];
+  for (const t of idx(db).live) {
+    if (t.status === "completed") continue;
+    if (ms(t.due_at) < now && !overdue.has(t.id)) {
+      fresh.push({ ...entry(ms(t.due_at), t.id, t.assigned_to ?? t.assigned_by, "overdue"), id: `od_${t.id}` });
+    }
+    if (t.status === "in_progress") {
+      const alert = overTimeEntry(db, t, now, known);
+      if (alert) fresh.push(alert);
+    }
+  }
+  return fresh.length === 0 ? db : { ...db, logs: [...db.logs, ...fresh] };
 }

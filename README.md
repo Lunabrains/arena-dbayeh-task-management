@@ -31,14 +31,15 @@ There are no passwords. On the first screen press **Explore Demo** and pick a pr
 | General Manager | Karim Mansour | Command Center, Task Deployment, departments, employees, reports |
 | Operations / Sales / Events / Sports / Restaurant Manager | Rami Nassar, Sarah Daher, Lea Nassar, Tony Mansour, Fadi Salem | Their own department only: team, tasks, reports |
 | Employee | Jad Salem (Operations) | My Day, My Tasks, My Progress, Profile |
+| Waiter | Samir Khoury (Quatro Restaurant) | The same simple employee screens, for restaurant staff |
 
-Inside the app, the **Demo** pill or your avatar (top right) opens the profile switcher with all 27 people, plus **Reset demo**. On any employee card, **See their screen** jumps straight into that person's view.
+Inside the app, the **Demo** pill or your avatar (top right) opens the profile switcher with all 31 people, plus **Reset demo**. On any employee card, **See their screen** jumps straight into that person's view.
 
 Two browser tabs can hold two different profiles at once (for example an employee and the Owner). Changes made in one appear in the other immediately.
 
 ### Walk-through
 
-1. **General Manager → Task Deployment → Deploy task.** Choose Operations, pick a template, choose Jad Salem, set Critical, Deploy.
+1. **General Manager → Task Deployment → Deploy task.** Choose Operations, pick a template, choose Jad Salem, set Critical, Deploy. (To see an alert quickly, set the time allowed to 1 minute; as the Owner you can assign the same way to a waiter.)
 2. **Employee (Jad Salem) → My Day.** The new task is at the top of the queue. Press Start, watch the timer, Pause, Resume, Done.
 3. **Operations Manager → My Department.** The task is under "Completed today" with its tracked time, and the department numbers have moved.
 4. **Owner → Command Center.** Company numbers are updated; click the Operations node on the 3D map (or the department list) for its people and tasks; open Reports.
@@ -47,14 +48,18 @@ Two browser tabs can hold two different profiles at once (for example an employe
 ## What is implemented
 
 - **Roles and permissions**: Owner, CEO, General Manager, Department Manager, Employee. One permissions layer (`src/lib/permissions.ts`) guards every route, every list and every action; managers cannot open other departments, employees see only their own tasks.
-- **Task deployment**: quick create dialog with department templates, assignee picker showing current workload, four priorities, quick deadlines, optional estimate, category and internal notes.
+- **Chain of command**: Owner > CEO > General Manager > Department Manager > Employee. Each position can assign tasks to, and manage the tasks of, everyone beneath it. The Owner can assign straight to a waiter; a department manager's chain is their own department.
+- **Task deployment**: quick create dialog with department templates, assignee picker grouped by leadership, manager and team (waiters grouped by restaurant) showing current workload, four priorities, a time allowed for the task, quick deadlines, optional category and internal notes.
+- **Time allowed and alerts**: every task carries a time allowed, set when it is assigned. When a running task passes it, the task is marked "Over time", the assignee sees a warning on their timer, and everyone above them gets a pop-up, an entry in the alert bell (top right), in "Needs attention" and in the activity feed.
+- **Restaurants and waiters**: a Restaurants section (Owner, CEO, General Manager and the Restaurant Manager) lists each restaurant with its waiters, what each is doing now, and its open, overdue and over-time tasks. Quatro is named on Arena's website; the Terrace Café is a sample second outlet.
+- **Filters**: the task board filters by status (all open, overdue, over time allowed, in progress, paused, not started, unassigned, completed today), by assignee, department, restaurant and priority, plus search. Team Activity filters by status, department and name. The Overdue tile and each alert open the board already filtered.
 - **Priority lanes**: Critical / High / Medium / Low, sorted by manual order, then earliest deadline, then assignment order. Managers can move tasks up and down inside a priority, change priority, reassign, reopen, remove and escalate to the General Manager.
 - **Live task timer**: Start, Pause, Resume, Done. Time is calculated from stored timestamps, so it stays correct after a refresh, a page change, a background tab or a sleeping device. Paused time is never counted. One running task per person; starting a second offers to pause the first. Completed tasks can only be reopened by an authorised manager.
 - **Employee portal (mobile first)**: greeting, three numbers, priority queue with a large Start button, focused timer screen, completion animation with optional note and the next task, automatic end-of-day summary.
 - **Department manager portal**: department numbers, live employee cards, quick Assign Task, attention list, activity feed, daily report.
 - **Executive Command Center**: eight live KPI tiles, interactive 3D department map (with a flat fallback), live activity feed, rule-based "needs attention" panel, department drill-down panel.
 - **Reporting**: employee, department and executive reports calculated from task data; daily / weekly / monthly filters; the submission chain manager → General Manager → Owner / CEO; CSV export and print / save as PDF.
-- **Demo data**: 27 fictional people in 8 departments, about 95 tasks for today in every state, 14 days of history, activity logs and submitted reports. Generated from a fixed seed. **Reset demo** restores it.
+- **Demo data**: 31 fictional people in 8 departments and 2 restaurants, about 115 tasks for today in every state, 14 days of history, activity logs and submitted reports. Generated from a fixed seed. **Reset demo** restores it.
 
 ### Rules worth knowing
 
@@ -76,7 +81,7 @@ src/lib/selectors.ts     every number on screen, derived from the data
 src/lib/seed.ts          deterministic demo data
 src/lib/repository.ts    persistence boundary (browser storage today)
 src/lib/store.ts         app state, shared clock, actions
-src/components/          design kit, shell, task board, composer, employee and department views, 3D map, reports
+src/components/          design kit, shell (with the alert bell), task board and filters, composer, employee and department views, 3D map, reports
 src/app/                 routes: / (role selection) and the role portals under (app)/
 ```
 

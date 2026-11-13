@@ -91,6 +91,12 @@ export function elapsedSeconds(db: Database, taskId: string, now: number): numbe
 
 export const isOverdue = (t: Task, now: number) => t.status !== "completed" && ms(t.due_at) < now;
 
+/** Seconds a task has run beyond its time allowed (0 inside the limit or when no limit is set). */
+export function overTimeSeconds(db: Database, t: Task, now: number): number {
+  if (!t.estimated_duration) return 0;
+  return Math.max(0, elapsedSeconds(db, t.id, now) - t.estimated_duration * 60);
+}
+
 /** Priority first, then manual rank, then earliest deadline, then assignment order. */
 export function compareTasks(a: Task, b: Task): number {
   const p = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
@@ -371,7 +377,16 @@ export function departmentNodes(db: Database, now: number): DepartmentNode[] {
 
 export interface AttentionItem {
   id: string;
-  kind: "critical_overdue" | "unassigned" | "paused_long" | "unresolved" | "bottleneck" | "escalated";
+  kind:
+    | "critical_overdue"
+    | "unassigned"
+    | "paused_long"
+    | "unresolved"
+    | "bottleneck"
+    | "escalated"
+    | "over_time"
+    | "overdue"
+    | "new_task";
   severity: "critical" | "warning";
   title: string;
   detail: string;
@@ -423,6 +438,19 @@ export function attentionItems(db: Database, now: number, deptIds?: string[]): A
         detail: `${PRIORITY_LABEL[t.priority]} task in ${dept(t.department_id)} has no one assigned.`,
         task_id: t.id,
         department_id: t.department_id,
+      });
+    }
+    const over = overTimeSeconds(db, t, now);
+    if (over > 0 && t.assigned_to && t.estimated_duration) {
+      out.push({
+        id: `ot-${t.id}`,
+        kind: "over_time",
+        severity: over > t.estimated_duration * 30 ? "critical" : "warning",
+        title: t.title,
+        detail: `${t.status === "in_progress" ? "Running" : "Stopped at"} ${fmtDuration(over)} over the ${fmtDuration(t.estimated_duration * 60)} allowed. ${name(t.assigned_to)} (${dept(t.department_id)}).`,
+        task_id: t.id,
+        department_id: t.department_id,
+        user_id: t.assigned_to,
       });
     }
     const paused = pausedMinutes(db, t, now);
@@ -593,6 +621,10 @@ function describe(db: Database, log: TaskActivityLog): FeedEntry {
       text = `${title} became overdue`;
       tone = "crit";
       break;
+    case "over_time":
+      text = `went over the ${log.new_value} min allowed on ${title}`;
+      tone = "crit";
+      break;
     case "removed":
       text = `removed ${title}`;
       break;
@@ -638,4 +670,87 @@ export function taskLogs(db: Database, taskId: string, limit = 6): FeedEntry[] {
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
     .slice(0, limit)
     .map((l) => describe(db, l));
+}
+
+/**
+ * What the alert bell shows. Managers and executives get the attention list
+ * for their scope; employees get alerts about their own tasks.
+ */
+export function notificationsFor(db: Database, viewer: User, now: number): AttentionItem[] {
+  if (viewer.role !== "employee") {
+    return attentionItems(db, now, isCompanyWide(viewer) ? undefined : viewer.department_id ? [viewer.department_id] : []);
+  }
+  const i = idx(db);
+  const out: AttentionItem[] = [];
+  for (const t of queueFor(db, viewer.id)) {
+    const over = overTimeSeconds(db, t, now);
+    if (over > 0 && t.estimated_duration) {
+      out.push({
+        id: `mot-${t.id}`,
+        kind: "over_time",
+        severity: "warning",
+        title: t.title,
+        detail: `You are ${fmtDuration(over)} over the ${fmtDuration(t.estimated_duration * 60)} allowed.`,
+        task_id: t.id,
+      });
+    }
+    if (ms(t.due_at) < now) {
+      out.push({
+        id: `mod-${t.id}`,
+        kind: "overdue",
+        severity: t.priority === "critical" ? "critical" : "warning",
+        title: t.title,
+        detail: `Overdue by ${fmtDuration((now - ms(t.due_at)) / 1000)}.`,
+        task_id: t.id,
+      });
+    } else if (t.status === "pending" && now - ms(t.created_at) < 60 * MIN) {
+      out.push({
+        id: `mnew-${t.id}`,
+        kind: "new_task",
+        severity: "warning",
+        title: t.title,
+        detail: `New task from ${i.userById.get(t.assigned_by)?.name ?? "your manager"}.`,
+        task_id: t.id,
+      });
+    }
+  }
+  return out.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "critical" ? -1 : 1));
+}
+
+export interface RestaurantSummary {
+  waiters: User[];
+  tasks: Task[]; // open work plus anything due today, in working order
+  working: number;
+  open: number;
+  overdue: number;
+  over_time: number;
+  assigned_today: number;
+  completed_today: number;
+  completion: number; // 0-100, of tasks due today
+}
+
+/** A restaurant's waiters and the work assigned to them. */
+export function restaurantSummary(db: Database, restaurantId: string, now: number): RestaurantSummary {
+  const i = idx(db);
+  const today = dateKey(now);
+  const waiters = db.users.filter((u) => u.restaurant_id === restaurantId && u.active_status);
+  const ids = new Set(waiters.map((u) => u.id));
+  const mine = i.live.filter((t) => t.assigned_to && ids.has(t.assigned_to));
+  const open = mine.filter((t) => t.status !== "completed");
+  const s = summarize(
+    db,
+    mine.filter((t) => i.dayOf.get(t.id) === today),
+    now,
+  );
+  return {
+    waiters,
+    tasks: sortTasks(mine.filter((t) => t.status !== "completed" || i.dayOf.get(t.id) === today)),
+    working: waiters.filter((u) => i.openByEmployee.has(u.id)).length,
+    open: open.length,
+    overdue: open.filter((t) => ms(t.due_at) < now).length,
+    over_time: open.filter((t) => overTimeSeconds(db, t, now) > 0).length,
+    assigned_today: s.assigned,
+    completed_today: s.completed,
+    completion: s.completion_rate,
+  };
 }

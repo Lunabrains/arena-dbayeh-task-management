@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Bell,
   Building2,
   ChartColumn,
   ListChecks,
@@ -16,20 +17,23 @@ import {
   TrendingUp,
   User as UserIcon,
   Users,
+  Utensils,
   type LucideIcon,
 } from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { AttentionList } from "@/components/activity";
 import { ArenaMark, Avatar, Btn, EASE, Loader, Logo } from "@/components/kit";
 import { TaskComposer } from "@/components/task-composer";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { canAccessRoute, homeFor, navFor, type NavItem } from "@/lib/permissions";
+import { canAccessRoute, homeFor, isCompanyWide, navFor, type NavItem } from "@/lib/permissions";
+import { notificationsFor, type AttentionItem } from "@/lib/selectors";
 import { resetDemo, signOut, switchProfile, useApp, useDb, useMe, useNow } from "@/lib/store";
 import { dateKey, fmtKeyLong, fmtTime } from "@/lib/time";
 import type { User } from "@/lib/types";
-import { closeDemo, openDemo, useUi } from "@/lib/ui";
+import { closeDemo, openDemo, showOnBoard, useUi, type BoardQuick } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 const ICONS: Record<NavItem["icon"], LucideIcon> = {
@@ -46,6 +50,7 @@ const ICONS: Record<NavItem["icon"], LucideIcon> = {
   trend: TrendingUp,
   user: UserIcon,
   building: Building2,
+  utensils: Utensils,
 };
 
 const SHORT: Record<string, string> = {
@@ -59,6 +64,7 @@ const SHORT: Record<string, string> = {
   Employees: "Team",
   "My Progress": "Progress",
   "My Tasks": "Tasks",
+  Restaurants: "Dining",
 };
 
 /** Gate + chrome for every signed-in screen. Access is checked here centrally. */
@@ -78,7 +84,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   if (!ready || !me || !allowed) return <Loader />;
 
-  const items = navFor(me.role);
+  const items = navFor(me);
   return (
     <div className="min-h-dvh">
       <Dock items={items} pathname={pathname} me={me} />
@@ -195,6 +201,7 @@ function TopBar({ me }: { me: User }) {
         </p>
       </div>
       <div className="pointer-events-auto flex items-center gap-2">
+        <Alerts me={me} />
         <button
           type="button"
           onClick={openDemo}
@@ -202,7 +209,7 @@ function TopBar({ me }: { me: User }) {
           title="This is a demonstration environment with fictional sample data"
         >
           <span className="size-1.5 rounded-full bg-warn" />
-          Demo<span className="hidden sm:inline"> · sample data</span>
+          Demo<span className="hidden lg:inline"> · sample data</span>
         </button>
         <button
           type="button"
@@ -334,5 +341,75 @@ function DemoControls() {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Alert bell: tasks over their time allowed, overdue work and anything else waiting on this person. */
+function Alerts({ me }: { me: User }) {
+  const db = useDb();
+  const now = useNow();
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const items = useMemo(() => notificationsFor(db, me, now), [db, me, now]);
+  const critical = items.some((i) => i.severity === "critical");
+
+  const go = (item: AttentionItem) => {
+    setOpen(false);
+    if (me.role === "employee") {
+      router.push("/my-tasks");
+      return;
+    }
+    const quick: BoardQuick =
+      item.kind === "over_time"
+        ? "over_time"
+        : item.kind === "unassigned"
+          ? "unassigned"
+          : item.kind === "paused_long"
+            ? "paused"
+            : item.kind === "escalated"
+              ? "open"
+              : "overdue";
+    showOnBoard({
+      quick,
+      dept: isCompanyWide(me) ? (item.department_id ?? "") : "",
+      assignee: item.kind === "over_time" || item.kind === "unresolved" ? (item.user_id ?? "") : "",
+    });
+    router.push("/tasks");
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="glass relative grid size-10 place-items-center rounded-full"
+        aria-label={items.length === 1 ? "1 alert" : `${items.length} alerts`}
+      >
+        <Bell className="size-[18px]" />
+        {items.length > 0 && (
+          <span
+            className={cn(
+              "tnum absolute -top-1 -right-1 grid h-5 min-w-5 place-items-center rounded-full px-1 text-[10px] font-bold text-ink",
+              critical ? "bg-crit" : "bg-warn",
+            )}
+          >
+            {items.length}
+          </span>
+        )}
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="glass-solid block max-h-[88dvh] overflow-x-hidden overflow-y-auto rounded-3xl p-5 sm:max-w-lg">
+          <p className="eyebrow">Alerts</p>
+          <DialogTitle className="display mt-1 text-3xl">
+            {items.length === 0 ? "All clear" : items.length === 1 ? "1 alert" : `${items.length} alerts`}
+          </DialogTitle>
+          <DialogDescription className="mt-1.5 mb-4 text-paper/55">
+            Tasks running past their time allowed, overdue work and other items that need attention. This list updates
+            by itself.
+          </DialogDescription>
+          <AttentionList items={items} onItem={go} limit={8} />
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

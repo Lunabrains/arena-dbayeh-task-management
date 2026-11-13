@@ -4,6 +4,7 @@
 // big button to start working. Built mobile first.
 
 import {
+  AlarmClock,
   CalendarClock,
   Check,
   ListChecks,
@@ -406,6 +407,15 @@ function FocusMode({
         </span>
       </div>
 
+      {over && (
+        <p
+          role="alert"
+          className="mt-5 flex items-center gap-2 rounded-full border border-warn/45 bg-warn/12 px-4 py-2 text-sm font-semibold text-warn"
+        >
+          <AlarmClock className="size-4 shrink-0" /> Over the time allowed. Your manager has been alerted.
+        </p>
+      )}
+
       <div className="relative mt-8">
         <motion.div
           aria-hidden="true"
@@ -427,8 +437,8 @@ function FocusMode({
               {est === 0
                 ? "active time"
                 : over
-                  ? `${fmtDuration(elapsed - est)} over the ${fmtDuration(est)} estimate`
-                  : `of ${fmtDuration(est)} estimated`}
+                  ? `${fmtDuration(elapsed - est)} over the ${fmtDuration(est)} allowed`
+                  : `of ${fmtDuration(est)} allowed`}
             </p>
           </div>
         </Ring>
@@ -821,6 +831,7 @@ export function Profile() {
   const i = idx(db);
   const dept = me.department_id ? i.deptById.get(me.department_id) : null;
   const manager = me.manager_id ? i.userById.get(me.manager_id) : null;
+  const restaurant = db.restaurants.find((r) => r.id === me.restaurant_id);
   return (
     <div className="mx-auto max-w-2xl">
       <p className="eyebrow">Profile</p>
@@ -831,6 +842,7 @@ export function Profile() {
           <p className="mt-1.5 text-sm text-paper/65">
             {me.title}
             {dept ? ` · ${dept.name}` : ""}
+            {restaurant ? ` · ${restaurant.name}` : ""}
           </p>
           {manager && (
             <p className="mt-0.5 text-xs text-paper/45">

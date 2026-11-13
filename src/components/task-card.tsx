@@ -24,7 +24,7 @@ import {
   canRunTimer,
   canSeeInternalNotes,
 } from "@/lib/permissions";
-import { elapsedSeconds, idx, isOverdue, taskLogs } from "@/lib/selectors";
+import { elapsedSeconds, idx, isOverdue, overTimeSeconds, taskLogs } from "@/lib/selectors";
 import { actions, useDb, useMe, useNow } from "@/lib/store";
 import { fmtAgo, fmtClock, fmtDay, fmtDue, fmtDuration, fmtTime } from "@/lib/time";
 import { PRIORITIES, PRIORITY_COLOR, PRIORITY_LABEL, type Task } from "@/lib/types";
@@ -141,6 +141,7 @@ export function TaskCard({
   const elapsed = elapsedSeconds(db, task.id, now);
   const color = PRIORITY_COLOR[task.priority];
   const done = task.status === "completed";
+  const over = done ? 0 : overTimeSeconds(db, task, now);
 
   return (
     <motion.article
@@ -159,9 +160,14 @@ export function TaskCard({
         aria-expanded={open}
         className="block w-full p-4 pl-5 text-left"
       >
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <PriorityBadge priority={task.priority} />
           <StatusBadge status={task.status} overdue={overdue} />
+          {over > 0 && (
+            <span className="tnum rounded-full bg-warn/15 px-2 py-0.5 text-[11px] font-semibold tracking-wider text-warn uppercase ring-1 ring-warn/40 ring-inset">
+              Over time +{fmtDuration(over)}
+            </span>
+          )}
           <ChevronDown className={cn("ml-auto size-4 shrink-0 text-paper/40 transition-transform", open && "rotate-180")} />
         </div>
         <h3 className={cn("mt-2.5 text-[15px] leading-snug font-semibold", done && "line-through decoration-paper/30")}>
@@ -181,7 +187,7 @@ export function TaskCard({
           </span>
           {task.estimated_duration ? (
             <span className="flex items-center gap-1.5">
-              <Timer className="size-3.5" /> {fmtDuration(task.estimated_duration * 60)} est.
+              <Timer className="size-3.5" /> {fmtDuration(task.estimated_duration * 60)} allowed
             </span>
           ) : null}
           <span className={cn("tnum flex items-center gap-1.5 font-mono", running ? "text-brand" : elapsed > 0 ? "text-paper/80" : "")}>
@@ -213,7 +219,7 @@ function TaskDetails({ task, siblings }: { task: Task; siblings?: string[] }) {
   const now = useNow();
   const [confirmRemove, setConfirmRemove] = useState(false);
   const i = idx(db);
-  const manage = canManageTask(me, task);
+  const manage = canManageTask(db, me, task);
   const assignable = manage ? assignableUsers(db, me, task.department_id) : [];
   const pos = siblings?.indexOf(task.id) ?? -1;
   const logs = taskLogs(db, task.id, 5);

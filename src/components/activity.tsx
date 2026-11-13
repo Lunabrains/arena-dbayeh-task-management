@@ -2,6 +2,7 @@
 
 import {
   Activity,
+  AlarmClock,
   Check,
   ChevronRight,
   CircleCheck,
@@ -35,6 +36,7 @@ const ACTION_ICON: Partial<Record<ActivityAction, LucideIcon>> = {
   reassigned: Repeat,
   priority_changed: Flag,
   overdue: TriangleAlert,
+  over_time: AlarmClock,
   escalated: Flag,
   report_submitted: FileText,
 };
@@ -95,6 +97,9 @@ const KIND_ICON: Record<AttentionItem["kind"], LucideIcon> = {
   unresolved: UserX,
   bottleneck: Network,
   escalated: Flag,
+  over_time: AlarmClock,
+  overdue: TriangleAlert,
+  new_task: Send,
 };
 
 const KIND_LABEL: Record<AttentionItem["kind"], string> = {
@@ -104,38 +109,52 @@ const KIND_LABEL: Record<AttentionItem["kind"], string> = {
   unresolved: "Unresolved work",
   bottleneck: "Bottleneck",
   escalated: "Escalated",
+  over_time: "Over time allowed",
+  overdue: "Overdue",
+  new_task: "New task",
 };
 
-/** Rule-based list of what needs a manager. Each line says exactly why it is there. */
-export function AttentionPanel({ deptIds, onDept }: { deptIds?: string[]; onDept?: (deptId: string) => void }) {
-  const db = useDb();
-  const now = useNow();
+/** The alert rows themselves. Each line says exactly why it is there. */
+export function AttentionList({
+  items,
+  onItem,
+  limit = 6,
+}: {
+  items: AttentionItem[];
+  onItem?: (item: AttentionItem) => void;
+  limit?: number;
+}) {
   const [all, setAll] = useState(false);
-  const items = useMemo(() => attentionItems(db, now, deptIds), [db, now, deptIds]);
-
   if (items.length === 0) {
     return (
       <Empty
         icon={<CircleCheck className="size-6" />}
         title="All clear"
-        hint="No overdue critical tasks, long pauses or unassigned urgent work."
+        hint="Nothing is over its time allowed, overdue or waiting on you."
       />
     );
   }
-  const shown = all ? items : items.slice(0, 6);
+  const shown = all ? items : items.slice(0, limit);
   return (
     <div>
       <ul className="space-y-2">
         {shown.map((item) => {
           const Icon = KIND_ICON[item.kind];
           const crit = item.severity === "critical";
+          const info = item.kind === "new_task";
+          const tone = info ? "text-brand" : crit ? "text-crit" : "text-warn";
           const body = (
             <>
-              <span className={cn("mt-0.5 grid size-8 shrink-0 place-items-center rounded-full", crit ? "bg-crit/15 text-crit" : "bg-warn/15 text-warn")}>
+              <span
+                className={cn(
+                  "mt-0.5 grid size-8 shrink-0 place-items-center rounded-full",
+                  info ? "bg-brand/15 text-brand" : crit ? "bg-crit/15 text-crit" : "bg-warn/15 text-warn",
+                )}
+              >
                 <Icon className="size-4" />
               </span>
               <span className="min-w-0 flex-1">
-                <span className={cn("block text-[10px] font-bold tracking-[0.16em] uppercase", crit ? "text-crit" : "text-warn")}>
+                <span className={cn("block text-[10px] font-bold tracking-[0.16em] uppercase", tone)}>
                   {KIND_LABEL[item.kind]}
                 </span>
                 <span className="block truncate text-sm font-semibold">{item.title}</span>
@@ -145,10 +164,10 @@ export function AttentionPanel({ deptIds, onDept }: { deptIds?: string[]; onDept
           );
           return (
             <li key={item.id}>
-              {onDept && item.department_id ? (
+              {onItem ? (
                 <button
                   type="button"
-                  onClick={() => onDept(item.department_id!)}
+                  onClick={() => onItem(item)}
                   className="flex w-full items-start gap-3 rounded-2xl border border-white/8 bg-white/[0.025] p-3 text-left transition hover:border-white/25"
                 >
                   {body}
@@ -161,11 +180,24 @@ export function AttentionPanel({ deptIds, onDept }: { deptIds?: string[]; onDept
           );
         })}
       </ul>
-      {items.length > 6 && (
+      {items.length > limit && (
         <Btn size="sm" variant="subtle" className="mt-2" onClick={() => setAll((a) => !a)}>
           {all ? "Show fewer" : `Show all ${items.length}`}
         </Btn>
       )}
     </div>
+  );
+}
+
+/** Rule-based list of what needs a manager, for a department or the whole venue. */
+export function AttentionPanel({ deptIds, onDept }: { deptIds?: string[]; onDept?: (deptId: string) => void }) {
+  const db = useDb();
+  const now = useNow();
+  const items = useMemo(() => attentionItems(db, now, deptIds), [db, now, deptIds]);
+  return (
+    <AttentionList
+      items={items}
+      onItem={onDept ? (item) => item.department_id && onDept(item.department_id) : undefined}
+    />
   );
 }

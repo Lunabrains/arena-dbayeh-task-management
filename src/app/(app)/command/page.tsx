@@ -13,6 +13,7 @@ import {
   Users,
   Zap,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { ActivityFeed, AttentionPanel } from "@/components/activity";
 import { ArenaMap } from "@/components/arena-scene";
@@ -22,7 +23,7 @@ import { canCreateTasks } from "@/lib/permissions";
 import { companyKpis, departmentNodes, HEALTH_COLOR, healthOf } from "@/lib/selectors";
 import { useDb, useMe, useNow } from "@/lib/store";
 import { fmtDuration, greeting } from "@/lib/time";
-import { openComposer } from "@/lib/ui";
+import { openComposer, showOnBoard } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 export default function CommandCenterPage() {
@@ -32,6 +33,7 @@ export default function CommandCenterPage() {
   const k = useMemo(() => companyKpis(db, now), [db, now]);
   const nodes = useMemo(() => departmentNodes(db, now), [db, now]);
   const [dept, setDept] = useState<string | null>(null);
+  const router = useRouter();
 
   return (
     <>
@@ -62,7 +64,11 @@ export default function CommandCenterPage() {
           value={k.overdue}
           tone={k.overdue ? "crit" : "default"}
           icon={<TriangleAlert className="size-4" />}
-          sub={k.overdue_earlier ? `${k.overdue_earlier} carried from earlier days` : "past deadline, not completed"}
+          sub={k.overdue_earlier ? `${k.overdue_earlier} from earlier days · open the list` : "past deadline · open the list"}
+          onClick={() => {
+            showOnBoard({ quick: "overdue" });
+            router.push("/tasks");
+          }}
         />
         <Stat
           label="Completion rate"

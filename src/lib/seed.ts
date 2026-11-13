@@ -10,6 +10,7 @@ import type {
   Database,
   Department,
   Priority,
+  Restaurant,
   Task,
   TaskActivityLog,
   TaskStatus,
@@ -17,7 +18,7 @@ import type {
   User,
 } from "./types";
 
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 const HOUR = 60 * MIN;
 
 function rng(seed: number) {
@@ -30,34 +31,45 @@ function rng(seed: number) {
   };
 }
 
-type Person = [name: string, title: string];
+// Quatro is the restaurant named on arenadbayeh.com; the Terrace Café is a
+// sample second outlet for the demo.
+const RESTAURANTS: Omit<Restaurant, "department_id" | "display_order">[] = [
+  { id: "quatro", name: "Quatro Restaurant", description: "Main dining room by the playground: international, Italian and Arabic dishes and a kids' menu." },
+  { id: "terrace", name: "Terrace Café", description: "Outdoor terrace for coffee, snacks and light meals. Sample second outlet for the demo." },
+];
+
+type Person = [name: string, title: string, restaurant?: string];
 const ORG: { id: string; name: string; short: string; description: string; manager: Person; staff: Person[] }[] = [
   { id: "ops", name: "Operations", short: "OPS", description: "Venue opening, staffing and daily floor operations.", manager: ["Rami Nassar", "Operations Manager"], staff: [["Jad Salem", "Operations Employee"], ["Elias Farah", "Operations Employee"]] },
   { id: "sales", name: "Sales & Bookings", short: "SALES", description: "Inquiries, corporate clients and booking confirmations.", manager: ["Sarah Daher", "Sales Manager"], staff: [["Nour Haddad", "Sales Executive"], ["Marc Khoury", "Sales Executive"]] },
   { id: "sports", name: "Sports Facilities", short: "SPORTS", description: "Football pitch, padel courts and sports equipment.", manager: ["Tony Mansour", "Sports Manager"], staff: [["Chris Saad", "Sports Employee"], ["Adam Elias", "Sports Employee"]] },
   { id: "events", name: "Events & Birthdays", short: "EVENTS", description: "Birthday parties, themed weekends and private events.", manager: ["Lea Nassar", "Events Manager"], staff: [["Rita Farah", "Events Coordinator"], ["Joe Haddad", "Events Employee"]] },
-  { id: "restaurant", name: "Restaurant & Hospitality", short: "F&B", description: "Dining room, service stations and hygiene standards.", manager: ["Fadi Salem", "Restaurant Manager"], staff: [["Mira Daher", "Restaurant Employee"], ["Samir Khoury", "Restaurant Employee"]] },
+  {
+    id: "restaurant", name: "Restaurants & Hospitality", short: "F&B", description: "The restaurants, their waiters, service and hygiene standards.", manager: ["Fadi Salem", "Restaurant Manager"],
+    staff: [["Mira Daher", "Waiter", "quatro"], ["Samir Khoury", "Waiter", "quatro"], ["Rani Kassab", "Waiter", "quatro"], ["Tala Hanna", "Waiter", "terrace"], ["Karl Habib", "Waiter", "terrace"], ["Jana Matar", "Waiter", "terrace"]],
+  },
   { id: "maint", name: "Maintenance", short: "MAINT", description: "Lighting, air-conditioning, repairs and equipment safety.", manager: ["Georges Karam", "Maintenance Manager"], staff: [["Ziad Tannous", "Maintenance Technician"], ["Hadi Rahme", "Maintenance Technician"]] },
   { id: "marketing", name: "Marketing", short: "MKT", description: "Social content, promotions and campaign updates.", manager: ["Yara Saab", "Marketing Manager"], staff: [["Carla Moussa", "Content Creator"], ["Omar Khalil", "Marketing Coordinator"]] },
   { id: "cx", name: "Customer Experience", short: "CX", description: "Feedback, complaints and front-desk service standards.", manager: ["Dana Azar", "Customer Experience Manager"], staff: [["Lynn Bitar", "Guest Relations Agent"], ["Paul Abboud", "Guest Relations Agent"]] },
 ];
 
-type Slot = "done" | "done_late" | "running" | "paused" | "paused_long" | "pending" | "overdue";
+type Slot = "done" | "done_late" | "running" | "running_over" | "paused" | "paused_long" | "pending" | "overdue";
 type Plan = [Slot, Priority?][];
 
-// One plan per employee, in ORG order. The first employee (the demo "Employee"
-// profile) starts with nothing running so the Start flow is clean.
+// One plan for each department's first two people, in ORG order. The demo
+// "Employee" and "Waiter" profiles start with nothing running so the Start
+// flow is clean; two people are already running over their time allowed.
 const PLANS: Plan[] = [
   [["done"], ["done"], ["pending", "high"], ["pending", "medium"], ["pending", "low"]],
-  [["done"], ["running"], ["pending"], ["pending"], ["pending"]],
+  [["done"], ["running_over"], ["pending"], ["pending"], ["pending"]],
   [["done"], ["done_late"], ["paused"], ["pending"], ["pending"], ["pending"]],
   [["done"], ["running"], ["overdue", "critical"], ["pending"], ["pending"]],
   [["done"], ["done"], ["running"], ["pending"], ["pending"]],
   [["done"], ["done"], ["done"], ["paused_long"], ["pending"]],
   [["done"], ["running"], ["pending"], ["pending"], ["pending"], ["pending"]],
   [["done"], ["done_late"], ["overdue"], ["pending"], ["pending"]],
-  [["done"], ["done"], ["running"], ["pending"], ["pending"]],
-  [["done"], ["running"], ["pending"], ["pending"], ["pending"], ["pending"]],
+  [["done"], ["done"], ["running_over"], ["pending"], ["pending"]],
+  [["done"], ["done"], ["pending", "high"], ["pending", "medium"], ["pending", "low"]],
   [["done"], ["running"], ["overdue", "critical"], ["overdue"], ["pending"]],
   [["done_late"], ["paused_long"], ["overdue", "high"], ["overdue"], ["pending"]],
   [["done"], ["done"], ["running"], ["pending"], ["pending"]],
@@ -65,6 +77,16 @@ const PLANS: Plan[] = [
   [["done"], ["done"], ["running"], ["pending"], ["pending"], ["pending"]],
   [["done"], ["done_late"], ["pending"], ["pending"], ["pending"]],
 ];
+
+// Plans for anyone beyond the first two people in a department (the waiters).
+const EXTRA_PLANS: Plan[] = [
+  [["done"], ["running"], ["pending"], ["pending"]],
+  [["done"], ["done"], ["paused"], ["pending"], ["pending"]],
+  [["done"], ["running"], ["overdue"], ["pending"]],
+  [["done"], ["pending"], ["pending"], ["pending"]],
+];
+
+const DEMO_STAFF = new Set(["e_ops_1", "e_restaurant_2"]);
 
 const MANAGER_SLOTS: Slot[] = ["pending", "done", "running", "pending", "done", "overdue", "pending", "paused"];
 
@@ -109,8 +131,8 @@ export function buildSeed(nowMs: number): Database {
   // --- People ---------------------------------------------------------------
   const joined = iso(S - 400 * 24 * HOUR);
   const users: User[] = [];
-  const addUser = (uid: string, name: string, role: User["role"], title: string, dept: string | null, manager: string | null) => {
-    const u: User = { id: uid, name, role, title, department_id: dept, manager_id: manager, avatar: String((users.length * 47 + 130) % 360), active_status: true, created_at: joined };
+  const addUser = (uid: string, name: string, role: User["role"], title: string, dept: string | null, manager: string | null, restaurant: string | null = null) => {
+    const u: User = { id: uid, name, role, title, department_id: dept, manager_id: manager, restaurant_id: restaurant, avatar: String((users.length * 47 + 130) % 360), active_status: true, created_at: joined };
     users.push(u);
     return u;
   };
@@ -119,13 +141,19 @@ export function buildSeed(nowMs: number): Database {
   const gm = addUser("u_gm", "Karim Mansour", "gm", "General Manager", null, "u_ceo");
   const departments: Department[] = [];
   const staff: User[] = [];
+  const plans: Plan[] = [];
   const managers: User[] = [];
+  let extra = 0;
   ORG.forEach((d, n) => {
     const m = addUser(`m_${d.id}`, d.manager[0], "manager", d.manager[1], d.id, gm.id);
     managers.push(m);
     departments.push({ id: d.id, name: d.name, short: d.short, manager_id: m.id, description: d.description, display_order: n });
-    d.staff.forEach((p, k) => staff.push(addUser(`e_${d.id}_${k + 1}`, p[0], "employee", p[1], d.id, m.id)));
+    d.staff.forEach((p, k) => {
+      staff.push(addUser(`e_${d.id}_${k + 1}`, p[0], "employee", p[1], d.id, m.id, p[2] ?? null));
+      plans.push(k < 2 ? PLANS[n * 2 + k] : EXTRA_PLANS[extra++ % EXTRA_PLANS.length]);
+    });
   });
+  const restaurants: Restaurant[] = RESTAURANTS.map((r, n) => ({ ...r, department_id: "restaurant", display_order: n }));
 
   // --- Tasks ----------------------------------------------------------------
   const tasks: Task[] = [];
@@ -179,6 +207,14 @@ export function buildSeed(nowMs: number): Database {
         status = "in_progress";
         break;
       }
+      case "running_over": {
+        // Already past the time allowed, so the alerts have something to show.
+        first = now - tpl.est * MIN * between(1.25, 1.7);
+        session(tid, to.id, first, null);
+        due = inDay(now + between(10, 60) * MIN);
+        status = "in_progress";
+        break;
+      }
       case "paused":
       case "paused_long": {
         const end = now - (slot === "paused" ? between(8, 30) : between(70, 140)) * MIN;
@@ -209,7 +245,7 @@ export function buildSeed(nowMs: number): Database {
     const dept = person.department_id!;
     const manager = managers.find((m) => m.department_id === dept)!;
     const pool = shuffled(TEMPLATES[dept]);
-    PLANS[n].forEach(([slot, forced], k) => addToday(dept, person, k % 4 === 3 ? gm : manager, slot, pool[k % pool.length], forced ?? priority()));
+    plans[n].forEach(([slot, forced], k) => addToday(dept, person, k % 4 === 3 ? gm : manager, slot, pool[k % pool.length], forced ?? priority()));
   });
   managers.forEach((m, n) => addToday(m.department_id!, m, gm, MANAGER_SLOTS[n], MANAGER_TEMPLATES[n % MANAGER_TEMPLATES.length], n === 5 ? "high" : priority()));
   addToday("ops", gm, owner, "pending", { title: "Prepare weekly operations briefing for ownership", description: "Summarise the week's performance, open risks and next week's priorities.", est: 45, category: "Management" }, "high");
@@ -237,7 +273,9 @@ export function buildSeed(nowMs: number): Database {
         const tid = id("t");
         const due = dS + between(9, 22) * HOUR;
         const created = dS + between(6, 8.5) * HOUR;
-        const stays = d <= 3 && lingering < 6 && rand() < (dept === "maint" ? 0.3 : 0.05);
+        // The demo Employee and Waiter profiles never carry old unfinished work.
+        const roll = rand();
+        const stays = d <= 3 && lingering < 6 && !DEMO_STAFF.has(person.id) && roll < (dept === "maint" ? 0.3 : 0.05);
         if (stays) {
           const pr: Priority = lingering === 0 ? "critical" : lingering === 1 ? "high" : priority();
           lingering++;
@@ -254,7 +292,7 @@ export function buildSeed(nowMs: number): Database {
     }
   }
 
-  const db: Database = { version: DB_VERSION, seeded_at: iso(now), users, departments, tasks, sessions, logs, daily_reports: [], executive_reports: [] };
+  const db: Database = { version: DB_VERSION, seeded_at: iso(now), users, departments, restaurants, tasks, sessions, logs, daily_reports: [], executive_reports: [] };
 
   // --- Submitted reports for every past day ---------------------------------
   for (let d = 14; d >= 1; d--) {
@@ -288,4 +326,5 @@ export const DEMO_PROFILES: { userId: string; label: string }[] = [
   { userId: "m_sports", label: "Sports Manager" },
   { userId: "m_restaurant", label: "Restaurant Manager" },
   { userId: "e_ops_1", label: "Employee" },
+  { userId: "e_restaurant_2", label: "Waiter" },
 ];

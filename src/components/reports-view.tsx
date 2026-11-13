@@ -1370,6 +1370,9 @@ const KIND_LABEL: Record<AttentionItem["kind"], string> = {
   unresolved: "Unresolved work",
   bottleneck: "Department bottleneck",
   escalated: "Escalated",
+  over_time: "Over time allowed",
+  overdue: "Overdue",
+  new_task: "New task",
 };
 
 function AttentionList({ items, empty }: { items: AttentionItem[]; empty: string }) {

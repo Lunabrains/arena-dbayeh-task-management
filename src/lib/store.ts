@@ -7,6 +7,7 @@ import * as engine from "./engine";
 import { DomainError, type NewTaskInput } from "./engine";
 import { localRepository as repo } from "./repository";
 import { buildSeed, DB_VERSION } from "./seed";
+import { canViewTask } from "./permissions";
 import { idx } from "./selectors";
 import { dateKey } from "./time";
 import type { Database, Priority, User } from "./types";
@@ -100,7 +101,8 @@ export function boot() {
     db = buildSeed(now);
     repo.save(db);
   }
-  db = engine.syncOverdue(db, now);
+  db = engine.syncAlerts(db, now);
+  announceAlerts(db, true);
   let userId: string | null = null;
   let effects: AppState["effects"] = "auto";
   try {
@@ -112,15 +114,46 @@ export function boot() {
   if (userId && !db.users.some((u) => u.id === userId)) userId = null;
   useApp.setState({ ready: true, db, userId, effects });
   repo.subscribe((next) => useApp.setState({ db: next }));
+  // Any change, from this tab or another one, may carry a new alert.
+  useApp.subscribe((s, prev) => {
+    if (s.db && s.db !== prev.db) announceAlerts(s.db);
+  });
   setInterval(() => {
     const cur = useApp.getState().db;
     if (!cur) return;
-    const next = engine.syncOverdue(cur, Date.now());
+    const next = engine.syncAlerts(cur, Date.now());
     if (next !== cur) {
       useApp.setState({ db: next });
       repo.save(next);
     }
-  }, 30_000);
+  }, 10_000);
+}
+
+// --- Alerts ------------------------------------------------------------------
+
+const announced = new Set<string>();
+
+/**
+ * Pops a notification the first time this tab sees a "ran over its time
+ * allowed" entry for a task the signed-in person may see. `quiet` marks
+ * existing entries as seen without notifying (first load, demo reset).
+ */
+function announceAlerts(db: Database, quiet = false) {
+  const { userId } = useApp.getState();
+  const i = idx(db);
+  const me = userId ? i.userById.get(userId) : undefined;
+  for (const l of db.logs) {
+    if (l.action !== "over_time" || announced.has(l.id)) continue;
+    announced.add(l.id);
+    const task = l.task_id ? i.taskById.get(l.task_id) : undefined;
+    if (quiet || !me || !task || task.status === "completed" || !canViewTask(me, task)) continue;
+    if (task.assigned_to === me.id) {
+      toast.warning(`You are over the ${l.new_value} min allowed for “${task.title}”.`, { duration: 8000 });
+    } else {
+      const who = i.userById.get(l.actor_id)?.name ?? "Someone";
+      toast.warning(`${who} is over the ${l.new_value} min allowed.`, { description: task.title, duration: 8000 });
+    }
+  }
 }
 
 /** Start the animated hand-over to another demo profile. */
@@ -158,7 +191,9 @@ export function setEffects(effects: AppState["effects"]) {
 }
 
 export function resetDemo() {
-  const db = buildSeed(Date.now());
+  const now = Date.now();
+  const db = engine.syncAlerts(buildSeed(now), now);
+  announceAlerts(db, true);
   repo.save(db);
   touchClock(false);
   useApp.setState({ db });

@@ -13,6 +13,7 @@ export interface User {
   title: string;
   department_id: string | null;
   manager_id: string | null;
+  restaurant_id: string | null; // waiters belong to one restaurant
   avatar: string; // hue (0-360) used to draw the initials avatar
   active_status: boolean;
   created_at: string;
@@ -27,6 +28,15 @@ export interface Department {
   display_order: number;
 }
 
+/** A restaurant outlet inside the restaurants department, with its own waiters. */
+export interface Restaurant {
+  id: string;
+  name: string;
+  department_id: string;
+  description: string;
+  display_order: number;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -37,7 +47,7 @@ export interface Task {
   priority: Priority;
   status: TaskStatus;
   due_at: string;
-  estimated_duration: number | null; // minutes
+  estimated_duration: number | null; // time allowed, in minutes; running past it raises an alert
   category: string | null;
   internal_notes: string | null;
   completion_note: string | null;
@@ -68,6 +78,7 @@ export type ActivityAction =
   | "priority_changed"
   | "edited"
   | "overdue"
+  | "over_time"
   | "removed"
   | "escalated"
   | "report_submitted";
@@ -155,6 +166,7 @@ export interface Database {
   seeded_at: string;
   users: User[];
   departments: Department[];
+  restaurants: Restaurant[];
   tasks: Task[];
   sessions: TaskTimeSession[];
   logs: TaskActivityLog[];
@@ -182,6 +194,9 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
   paused: "Paused",
   completed: "Completed",
 };
+/** Position in the chain of command; a lower number is higher up. */
+export const ROLE_RANK: Record<Role, number> = { owner: 0, ceo: 1, gm: 2, manager: 3, employee: 4 };
+
 export const ROLE_LABEL: Record<Role, string> = {
   owner: "Owner",
   ceo: "CEO",
