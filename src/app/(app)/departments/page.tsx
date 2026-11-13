@@ -26,6 +26,8 @@ export default function DepartmentsPage() {
         {nodes.map((n, k) => {
           const d = i.deptById.get(n.id)!;
           const manager = i.userById.get(d.manager_id);
+          const outlets = db.restaurants.filter((r) => r.department_id === n.id);
+          const waiters = db.users.filter((u) => outlets.some((r) => r.id === u.restaurant_id)).length;
           return (
             <motion.button
               key={n.id}
@@ -47,6 +49,11 @@ export default function DepartmentsPage() {
                 </Ring>
               </div>
               <p className="mt-2 line-clamp-2 text-xs text-paper/55">{d.description}</p>
+              {outlets.length > 0 && (
+                <p className="mt-1.5 text-xs font-semibold text-brand-soft">
+                  {outlets.map((r) => r.name).join(" · ")} · {waiters} waiters
+                </p>
+              )}
               <dl className="mt-4 grid grid-cols-3 gap-2 text-center">
                 {[
                   ["Assigned", n.assigned],

@@ -5,8 +5,6 @@
 import type { Database, Role, Task, User } from "./types";
 import { ROLE_RANK } from "./types";
 
-export const RESTAURANT_DEPT = "restaurant";
-
 export const isExec = (u: User) => u.role === "owner" || u.role === "ceo";
 export const isCompanyWide = (u: User) => isExec(u) || u.role === "gm";
 
@@ -27,9 +25,6 @@ export function visibleDepartmentIds(db: Database, u: User): string[] {
 export function canViewDepartment(u: User, deptId: string): boolean {
   return isCompanyWide(u) || (u.role === "manager" && u.department_id === deptId);
 }
-
-export const canViewRestaurants = (u: User) =>
-  isCompanyWide(u) || (u.role === "manager" && u.department_id === RESTAURANT_DEPT);
 
 export function canViewTask(u: User, t: Task): boolean {
   if (t.deleted_at) return false;
@@ -106,8 +101,7 @@ export interface NavItem {
     | "target"
     | "trend"
     | "user"
-    | "building"
-    | "utensils";
+    | "building";
 }
 
 const EXEC_NAV: NavItem[] = [
@@ -143,15 +137,8 @@ const NAV: Record<Role, NavItem[]> = {
   ],
 };
 
-const RESTAURANTS_NAV: NavItem = { href: "/restaurants", label: "Restaurants", icon: "utensils" };
-
-/** Navigation for a person. Restaurants appears for company-wide roles and the restaurant manager. */
-export function navFor(u: User): NavItem[] {
-  const base = NAV[u.role];
-  if (!canViewRestaurants(u)) return base;
-  const at = base.findIndex((n) => n.href === "/departments" || n.href === "/department") + 1;
-  return [...base.slice(0, at), RESTAURANTS_NAV, ...base.slice(at)];
-}
+/** Navigation for a person. Restaurants and their waiters live inside Departments. */
+export const navFor = (u: User): NavItem[] => NAV[u.role];
 
 export const homeFor = (role: Role) => NAV[role][0].href;
 

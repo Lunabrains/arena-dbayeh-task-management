@@ -1,18 +1,30 @@
 "use client";
 
-import { ChevronDown, Eye, Plus, TriangleAlert, Users } from "lucide-react";
+import { ChevronDown, Eye, ListFilter, Plus, TriangleAlert, Users } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { ActivityFeed, AttentionPanel } from "@/components/activity";
 import { Avatar, Btn, EASE, Empty, Panel, PriorityBadge, Ring, StatusBadge } from "@/components/kit";
 import { TaskCard, TrackedTime } from "@/components/task-card";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { assignableDepartmentIds, canAssign, canViewDepartment, canViewUser } from "@/lib/permissions";
-import { boardTasks, departmentNodes, employeeToday, idx, isOverdue, queueFor, sortTasks } from "@/lib/selectors";
+import {
+  boardTasks,
+  departmentNodes,
+  employeeToday,
+  HEALTH_COLOR,
+  healthOf,
+  idx,
+  isOverdue,
+  queueFor,
+  restaurantSummary,
+  sortTasks,
+} from "@/lib/selectors";
 import { switchProfile, useDb, useMe, useNow } from "@/lib/store";
 import { fmtDue, fmtDuration } from "@/lib/time";
-import type { User } from "@/lib/types";
-import { openComposer } from "@/lib/ui";
+import type { Restaurant, User } from "@/lib/types";
+import { openComposer, showOnBoard } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 const STATUS_CHIP = {
@@ -146,6 +158,9 @@ export function DepartmentView({ deptId, wide }: { deptId: string; wide?: boolea
   }
   const manager = idx(db).userById.get(dept.manager_id);
   const people = db.users.filter((u) => u.department_id === deptId && u.active_status && u.role === "employee");
+  // A department can contain restaurants; their waiters are shown under each one.
+  const outlets = db.restaurants.filter((r) => r.department_id === deptId);
+  const unplaced = people.filter((u) => !outlets.some((r) => r.id === u.restaurant_id));
   const open = tasks.filter((t) => t.status !== "completed");
   const done = tasks.filter((t) => t.status === "completed");
   const mayAssign = assignableDepartmentIds(db, me).includes(deptId);
@@ -195,13 +210,18 @@ export function DepartmentView({ deptId, wide }: { deptId: string; wide?: boolea
 
       <div className={cn("grid gap-5", wide && "xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]")}>
         <div className="space-y-5">
-          <Panel title="Team" icon={<Users className="size-5" />}>
-            <div className={cn("grid gap-3", wide && "md:grid-cols-2")}>
-              {people.map((u) => (
-                <EmployeeCard key={u.id} user={u} />
-              ))}
-            </div>
-          </Panel>
+          {outlets.map((r) => (
+            <RestaurantPanel key={r.id} restaurant={r} wide={wide} />
+          ))}
+          {unplaced.length > 0 && (
+            <Panel title={outlets.length ? "Other team members" : "Team"} icon={<Users className="size-5" />}>
+              <div className={cn("grid gap-3", wide && "md:grid-cols-2")}>
+                {unplaced.map((u) => (
+                  <EmployeeCard key={u.id} user={u} />
+                ))}
+              </div>
+            </Panel>
+          )}
           <Panel title={`Open tasks · ${open.length}`}>
             {open.length === 0 ? (
               <Empty title="Queue is clear" hint="Every task for this department is completed." />
@@ -233,6 +253,64 @@ export function DepartmentView({ deptId, wide }: { deptId: string; wide?: boolea
         </div>
       </div>
     </div>
+  );
+}
+
+/** One restaurant inside its department: live numbers and its waiters. */
+export function RestaurantPanel({ restaurant, wide }: { restaurant: Restaurant; wide?: boolean }) {
+  const db = useDb();
+  const now = useNow();
+  const router = useRouter();
+  const s = useMemo(() => restaurantSummary(db, restaurant.id, now), [db, restaurant.id, now]);
+  const tiles: [string, number, string?][] = [
+    ["Waiters", s.waiters.length],
+    ["Working now", s.working, "text-brand"],
+    ["Open tasks", s.open],
+    ["Overdue", s.overdue, s.overdue ? "text-crit" : undefined],
+    ["Over time allowed", s.over_time, s.over_time ? "text-warn" : undefined],
+    ["Done today", s.completed_today, "text-brand-soft"],
+  ];
+  return (
+    <section className="glass rounded-3xl p-4 md:p-5" aria-label={restaurant.name}>
+      <div className="flex flex-wrap items-center gap-4">
+        <Ring value={s.completion / 100} size={68} stroke={7} color={HEALTH_COLOR[healthOf(s)]}>
+          <span className="tnum font-display text-base font-bold italic">{Math.round(s.completion)}%</span>
+        </Ring>
+        <div className="min-w-0 flex-1">
+          <p className="eyebrow">Restaurant</p>
+          <h3 className="display mt-1 text-2xl md:text-3xl">{restaurant.name}</h3>
+          <p className="mt-1 text-sm text-paper/55">{restaurant.description}</p>
+        </div>
+        <Btn
+          size="sm"
+          className="no-print"
+          onClick={() => {
+            showOnBoard({ restaurant: restaurant.id });
+            router.push("/tasks");
+          }}
+        >
+          <ListFilter className="size-4" /> Its tasks
+        </Btn>
+      </div>
+
+      <dl className={cn("mt-4 grid grid-cols-3 gap-2.5", wide && "lg:grid-cols-6")}>
+        {tiles.map(([k, v, tone]) => (
+          <div key={k} className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+            <dt className="text-[10px] font-semibold tracking-[0.14em] text-paper/50 uppercase">{k}</dt>
+            <dd className={cn("tnum mt-1 font-display text-3xl font-bold italic", tone)}>{v}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <h4 className="mt-5 mb-3 flex items-center gap-2 font-display text-base font-bold tracking-wide uppercase">
+        <Users className="size-4 text-brand" /> Waiters
+      </h4>
+      <div className={cn("grid items-start gap-3", wide && "md:grid-cols-2")}>
+        {s.waiters.map((u) => (
+          <EmployeeCard key={u.id} user={u} />
+        ))}
+      </div>
+    </section>
   );
 }
 

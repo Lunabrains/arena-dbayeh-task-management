@@ -17,7 +17,6 @@ import {
   TrendingUp,
   User as UserIcon,
   Users,
-  Utensils,
   type LucideIcon,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -50,7 +49,6 @@ const ICONS: Record<NavItem["icon"], LucideIcon> = {
   trend: TrendingUp,
   user: UserIcon,
   building: Building2,
-  utensils: Utensils,
 };
 
 const SHORT: Record<string, string> = {
@@ -64,7 +62,6 @@ const SHORT: Record<string, string> = {
   Employees: "Team",
   "My Progress": "Progress",
   "My Tasks": "Tasks",
-  Restaurants: "Dining",
 };
 
 /** Gate + chrome for every signed-in screen. Access is checked here centrally. */
